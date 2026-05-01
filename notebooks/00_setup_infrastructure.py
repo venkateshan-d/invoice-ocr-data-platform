@@ -95,3 +95,70 @@ print(f"\nNext steps:")
 print(f"1. Upload invoice CSV files to: /Volumes/{catalog_name}/bronze/raw_data/")
 print(f"2. Deploy bundle: databricks bundle deploy -t {environment}")
 print(f"3. Run pipeline: databricks bundle run -t {environment} invoice_data_pipeline")
+
+# COMMAND ----------
+
+# DBTITLE 1,Extract ZIP File (Run After Upload)
+# Extract archive.zip and prepare CSV files
+import zipfile
+import os
+import shutil
+
+zip_file_path = f"/dbfs/Volumes/{catalog_name}/bronze/raw_data/archive.zip"
+volume_path = f"/dbfs/Volumes/{catalog_name}/bronze/raw_data/"
+
+print("Checking for archive.zip in volume...\n")
+print(f"Looking at: {zip_file_path}")
+
+if os.path.exists(zip_file_path):
+    print("✓ Found archive.zip\n")
+    
+    # Extract ZIP file
+    print("Extracting files...")
+    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+        zip_ref.extractall(volume_path)
+    print("✓ Files extracted\n")
+    
+    # Find CSV files in nested batch_1/batch_1/ structure
+    batch_path = os.path.join(volume_path, "batch_1/batch_1/")
+    
+    if os.path.exists(batch_path):
+        print(f"Moving CSV files from {batch_path}...")
+        csv_files = [f for f in os.listdir(batch_path) if f.endswith('.csv')]
+        
+        for csv_file in csv_files:
+            src = os.path.join(batch_path, csv_file)
+            dst = os.path.join(volume_path, csv_file)
+            shutil.move(src, dst)
+            file_size = os.path.getsize(dst) / (1024 * 1024)
+            print(f"  ✓ {csv_file} ({file_size:.2f} MB)")
+        
+        # Clean up nested folders
+        shutil.rmtree(os.path.join(volume_path, "batch_1"))
+        print("\n✓ Cleaned up nested folders")
+    
+    # Remove ZIP file
+    os.remove(zip_file_path)
+    print("✓ Removed archive.zip\n")
+    
+    # List final files
+    print("="*80)
+    print("FILES IN VOLUME:")
+    print("="*80)
+    files = [f for f in os.listdir(volume_path) if f.endswith('.csv')]
+    for f in files:
+        size = os.path.getsize(os.path.join(volume_path, f)) / (1024 * 1024)
+        print(f"  • {f} ({size:.2f} MB)")
+    
+    print(f"\n✅ Ready! {len(files)} CSV files prepared for ingestion.")
+    print(f"\nNow run: databricks bundle run -t {environment} invoice_data_pipeline_job")
+else:
+    print("❌ archive.zip not found!")
+    print(f"\nPlease upload archive.zip to:")
+    print(f"  /Volumes/{catalog_name}/bronze/raw_data/")
+    print(f"\nSteps:")
+    print(f"  1. Go to Catalog UI")
+    print(f"  2. Navigate: {catalog_name} → bronze → raw_data")
+    print(f"  3. Click 'Upload files'")
+    print(f"  4. Select archive.zip from your local machine")
+    print(f"  5. Come back and run this cell again")

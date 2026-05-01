@@ -1,12 +1,17 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "2"
+# ///
+
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Silver Layer - Invoice Data Transformation
-# MAGIC 
+# MAGIC
 # MAGIC **Purpose**: Clean, validate, and standardize bronze invoice data
-# MAGIC 
+# MAGIC
 # MAGIC **Transformations**:
 # MAGIC - Data type standardization
 # MAGIC - Date parsing and validation
@@ -132,4 +137,3 @@ print(f"\nRecords with null values: {null_count:,} ({null_count/df_silver_final.
 # Sample of clean data
 print("\nSample of clean records:")
 display(df_silver_final.filter(col("_data_quality_score") == 1.0).limit(10))
-

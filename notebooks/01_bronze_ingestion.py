@@ -1,17 +1,22 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "2"
+# ///
+
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Bronze Layer - Invoice Data Ingestion
-
-**Purpose**: Ingest raw invoice CSV files from Unity Catalog Volume into Bronze Delta table
-
-**Features**:
-- Auto Loader for incremental processing
-- Schema inference and evolution
-- Metadata tracking (_input_file, _load_timestamp, _rescue_data)
-- Idempotent processing with checkpoints
+# MAGIC
+# MAGIC **Purpose**: Ingest raw invoice CSV files from Unity Catalog Volume into Bronze Delta table
+# MAGIC
+# MAGIC **Features**:
+# MAGIC - Auto Loader for incremental processing
+# MAGIC - Schema inference and evolution
+# MAGIC - Metadata tracking (_input_file, _load_timestamp, _rescue_data)
+# MAGIC - Idempotent processing with checkpoints
 
 # COMMAND ----------
 
@@ -92,5 +97,4 @@ print(f"Environment: {environment}")
 print(f"Table: {BRONZE_TABLE}")
 
 display(df_bronze_table.limit(10))
-
 

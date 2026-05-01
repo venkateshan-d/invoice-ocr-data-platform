@@ -38,7 +38,6 @@ targets:
       catalog_name: invoice_analytics
       environment: prod
 
-# Include workflow definitions and environment configs
+# Include workflow definitions
 include:
   - workflows/*.yml
-  - config/${bundle.target}.yml

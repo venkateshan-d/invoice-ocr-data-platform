@@ -1,12 +1,17 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "2"
+# ///
+
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Gold Layer - Invoice Analytics
-# MAGIC 
+# MAGIC
 # MAGIC **Purpose**: Create business-ready analytics tables from silver data
-# MAGIC 
+# MAGIC
 # MAGIC **Tables Created**:
 # MAGIC - `invoice_summary`: Aggregated invoice metrics
 # MAGIC - `data_quality_metrics`: Pipeline health monitoring
@@ -138,4 +143,3 @@ print(f"  Bronze → Silver: {bronze_count:,} → {silver_count:,} ({silver_coun
 print(f"  Silver → Gold:   {silver_count:,} → {gold_count:,} ({gold_count/silver_count*100:.2f}% retention)")
 
 print(f"\n✓ Gold layer processing complete!")
-

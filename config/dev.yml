@@ -1,0 +1,28 @@
+# Development Environment Configuration
+resources:
+  jobs:
+    invoice_data_pipeline:
+      max_retries: 1
+      timeout_seconds: 3600
+      
+      tasks:
+        - task_key: bronze_ingestion
+          timeout_seconds: 1800
+          
+        - task_key: silver_transformation
+          timeout_seconds: 1800
+          
+        - task_key: gold_analytics
+          timeout_seconds: 1800
+
+variables:
+  volume_path: /Volumes/invoice_analytics_dev/bronze/raw_data/
+  checkpoint_path: /Volumes/invoice_analytics_dev/bronze/checkpoints/
+  
+  # Data quality thresholds (lenient for dev)
+  max_null_percentage: 0.20
+  duplicate_threshold: 0.10
+  
+  # Processing settings
+  batch_size: 1000
+  enable_monitoring: true

@@ -1,0 +1,36 @@
+# Production Environment Configuration
+resources:
+  jobs:
+    invoice_data_pipeline:
+      max_retries: 3
+      timeout_seconds: 7200
+      
+      tasks:
+        - task_key: bronze_ingestion
+          timeout_seconds: 3600
+          retry_on_timeout: true
+          
+        - task_key: silver_transformation
+          timeout_seconds: 3600
+          retry_on_timeout: true
+          
+        - task_key: gold_analytics
+          timeout_seconds: 3600
+          retry_on_timeout: true
+
+variables:
+  volume_path: /Volumes/invoice_analytics/bronze/raw_data/
+  checkpoint_path: /Volumes/invoice_analytics/bronze/checkpoints/
+  
+  # Data quality thresholds (strict for prod)
+  max_null_percentage: 0.05
+  duplicate_threshold: 0.02
+  
+  # Processing settings
+  batch_size: 10000
+  enable_monitoring: true
+  enable_alerts: true
+  
+  # SLA settings
+  max_processing_time_hours: 2
+  data_freshness_threshold_hours: 24

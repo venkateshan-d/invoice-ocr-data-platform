@@ -1,0 +1,39 @@
+# Databricks
+.databricks/
+*.pyc
+__pycache__/
+.ipynb_checkpoints/
+
+# Bundle artifacts
+.bundle/
+
+# Python
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets (never commit!)
+*.pem
+*.key
+kaggle.json
+.env
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/

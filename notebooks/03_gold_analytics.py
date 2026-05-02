@@ -105,6 +105,15 @@ display(df_invoice_summary.limit(10))
 
 # COMMAND ----------
 
+# DBTITLE 1,Optimize Gold Tables
+# MAGIC %sql
+# MAGIC -- Optimize all gold tables for fast queries
+# MAGIC OPTIMIZE invoice_analytics_dev.gold.invoice_summary ZORDER BY (invoice_month, vendor);
+# MAGIC OPTIMIZE invoice_analytics_dev.gold.vendor_analytics ZORDER BY (total_revenue, vendor_name);
+# MAGIC OPTIMIZE invoice_analytics_dev.gold.data_quality_metrics ZORDER BY (quality_tier);
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Create Data Quality Metrics Table
 

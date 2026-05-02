@@ -76,123 +76,95 @@ print(f"Bronze schema: {len(df_bronze.columns)} columns")
 # COMMAND ----------
 
 # DBTITLE 1,Parse OCR Text and Extract Fields
-# Define invoice schema for extraction
-invoice_schema = '''
-{
-  "invoice_number": {"type": "string", "description": "Invoice or reference number"},
-  "invoice_date": {"type": "string", "description": "Invoice date in any format"},
-  "total_amount": {"type": "number", "description": "Total invoice amount or grand total"},
-  "vendor_name": {"type": "string", "description": "Vendor, seller, or company name"},
-  "customer_name": {"type": "string", "description": "Customer, buyer, or bill-to name"}
-}
-'''
-
-# Extract structured fields using AI
-df_extracted = df_bronze.withColumn(
-    "extracted_fields",
-    expr(f"""
-        ai_extract(
-            parsed_content,
-            '{invoice_schema}',
-            MAP('version', '2.0', 'instructions', 'Extract invoice details from this document.')
-        )
-    """)
-)
-
-print("✓ AI extraction applied")
-print(f"Records to process: {df_extracted.count():,}")
-
-# COMMAND ----------
-
-# DBTITLE 1,Apply Data Quality Transformations
-# Parse extracted JSON and create typed columns
-df_silver = (df_extracted
-    # Extract fields from JSON
-    .withColumn("invoice_number", col("extracted_fields.invoice_number"))
-    .withColumn("invoice_date", col("extracted_fields.invoice_date"))
-    .withColumn("total_amount", col("extracted_fields.total_amount"))
-    .withColumn("vendor_name", col("extracted_fields.vendor_name"))
-    .withColumn("customer_name", col("extracted_fields.customer_name"))
-    
-    # Parse invoice date (try multiple formats)
-    .withColumn("invoice_date_parsed",
-        coalesce(
-            to_date(col("invoice_date"), "MM/dd/yyyy"),
-            to_date(col("invoice_date"), "dd/MM/yyyy"),
-            to_date(col("invoice_date"), "yyyy-MM-dd"),
-            to_date(col("invoice_date"), "MM-dd-yyyy"),
-            to_date(col("invoice_date"), "dd-MM-yyyy")
-        ))
-    
-    # Clean and cast total amount
-    .withColumn("total_amount_parsed",
-        when(col("total_amount").isNotNull(),
-             col("total_amount").cast("decimal(10,2)"))
-        .otherwise(lit(None)))
-    
-    # Clean vendor and customer names
-    .withColumn("vendor_name_clean", upper(trim(col("vendor_name"))))
-    .withColumn("customer_name_clean", upper(trim(col("customer_name"))))
-    
-    # Calculate field completeness (0-5)
-    .withColumn("fields_extracted",
-        (when(col("invoice_number").isNotNull(), 1).otherwise(0) +
-         when(col("invoice_date_parsed").isNotNull(), 1).otherwise(0) +
-         when(col("total_amount_parsed").isNotNull(), 1).otherwise(0) +
-         when(col("vendor_name").isNotNull(), 1).otherwise(0) +
-         when(col("customer_name").isNotNull(), 1).otherwise(0)))
-    
-    # Data quality score (0.0 to 1.0)
-    .withColumn("_data_quality_score", col("fields_extracted") / 5.0)
-    
-    # Row hash for deduplication
-    .withColumn("row_hash",
-        sha2(concat_ws("||",
-            coalesce(col("invoice_number"), lit("")),
-            coalesce(col("invoice_date"), lit("")),
-            coalesce(col("total_amount").cast("string"), lit(""))), 256))
-    
-    # Add silver metadata
-    .withColumn("_silver_processed_timestamp", current_timestamp())
-    .withColumn("_environment", lit(environment))
-)
-
-print("✓ Data quality transformations applied")
-
-# COMMAND ----------
-
-# DBTITLE 1,Deduplicate Records
-# Deduplicate based on row_hash (keep most recent)
-window_spec = Window.partitionBy("row_hash").orderBy(col("_silver_processed_timestamp").desc())
-
-df_silver_deduped = (df_silver
-    .withColumn("row_num", row_number().over(window_spec))
-    .filter(col("row_num") == 1)
-    .drop("row_num")
-)
-
-original_count = df_silver.count()
-deduped_count = df_silver_deduped.count()
-duplicates_removed = original_count - deduped_count
-
-print(f"Original records: {original_count:,}")
-print(f"After deduplication: {deduped_count:,}")
-print(f"Duplicates removed: {duplicates_removed:,}")
-print(f"✓ Deduplication complete")
+# MAGIC %sql
+# MAGIC -- Optimized: Single SQL query with ai_extract
+# MAGIC CREATE OR REPLACE TABLE invoice_analytics_dev.silver.invoices_clean
+# MAGIC AS
+# MAGIC WITH extracted AS (
+# MAGIC   SELECT
+# MAGIC     image_path,
+# MAGIC     file_name,
+# MAGIC     parsed_content,
+# MAGIC     page_count,
+# MAGIC     element_count,
+# MAGIC     ai_extract(
+# MAGIC       parsed_content,
+# MAGIC       '{
+# MAGIC         "invoice_number": {"type": "string", "description": "Invoice or reference number"},
+# MAGIC         "invoice_date": {"type": "string", "description": "Invoice date in any format"},
+# MAGIC         "total_amount": {"type": "number", "description": "Total invoice amount or grand total"},
+# MAGIC         "vendor_name": {"type": "string", "description": "Vendor, seller, or company name"},
+# MAGIC         "customer_name": {"type": "string", "description": "Customer, buyer, or bill-to name"}
+# MAGIC       }',
+# MAGIC       MAP('version', '2.0', 'instructions', 'Extract invoice details from this document.')
+# MAGIC     ) AS extracted_fields,
+# MAGIC     _load_timestamp,
+# MAGIC     _environment
+# MAGIC   FROM invoice_analytics_dev.bronze.invoices_raw_ocr
+# MAGIC   WHERE has_error = FALSE
+# MAGIC ),
+# MAGIC transformed AS (
+# MAGIC   SELECT
+# MAGIC     image_path,
+# MAGIC     file_name,
+# MAGIC     extracted_fields.invoice_number AS invoice_number,
+# MAGIC     extracted_fields.invoice_date AS invoice_date,
+# MAGIC     extracted_fields.total_amount AS total_amount,
+# MAGIC     extracted_fields.vendor_name AS vendor_name,
+# MAGIC     extracted_fields.customer_name AS customer_name,
+# MAGIC     -- Parse date (multiple formats)
+# MAGIC     COALESCE(
+# MAGIC       try_to_date(extracted_fields.invoice_date, 'MM/dd/yyyy'),
+# MAGIC       try_to_date(extracted_fields.invoice_date, 'dd/MM/yyyy'),
+# MAGIC       try_to_date(extracted_fields.invoice_date, 'yyyy-MM-dd'),
+# MAGIC       try_to_date(extracted_fields.invoice_date, 'MM-dd-yyyy'),
+# MAGIC       try_to_date(extracted_fields.invoice_date, 'dd-MM-yyyy')
+# MAGIC     ) AS invoice_date_parsed,
+# MAGIC     -- Cast amount
+# MAGIC     CAST(extracted_fields.total_amount AS DECIMAL(10,2)) AS total_amount_parsed,
+# MAGIC     -- Clean names
+# MAGIC     UPPER(TRIM(extracted_fields.vendor_name)) AS vendor_name_clean,
+# MAGIC     UPPER(TRIM(extracted_fields.customer_name)) AS customer_name_clean,
+# MAGIC     -- Field completeness
+# MAGIC     (
+# MAGIC       CASE WHEN extracted_fields.invoice_number IS NOT NULL THEN 1 ELSE 0 END +
+# MAGIC       CASE WHEN try_to_date(extracted_fields.invoice_date, 'MM/dd/yyyy') IS NOT NULL OR
+# MAGIC                 try_to_date(extracted_fields.invoice_date, 'dd/MM/yyyy') IS NOT NULL OR
+# MAGIC                 try_to_date(extracted_fields.invoice_date, 'yyyy-MM-dd') IS NOT NULL THEN 1 ELSE 0 END +
+# MAGIC       CASE WHEN extracted_fields.total_amount IS NOT NULL THEN 1 ELSE 0 END +
+# MAGIC       CASE WHEN extracted_fields.vendor_name IS NOT NULL THEN 1 ELSE 0 END +
+# MAGIC       CASE WHEN extracted_fields.customer_name IS NOT NULL THEN 1 ELSE 0 END
+# MAGIC     ) AS fields_extracted,
+# MAGIC     -- Row hash for deduplication
+# MAGIC     sha2(CONCAT_WS('||',
+# MAGIC       COALESCE(extracted_fields.invoice_number, ''),
+# MAGIC       COALESCE(extracted_fields.invoice_date, ''),
+# MAGIC       COALESCE(CAST(extracted_fields.total_amount AS STRING), '')
+# MAGIC     ), 256) AS row_hash,
+# MAGIC     current_timestamp() AS _silver_processed_timestamp,
+# MAGIC     'dev' AS _environment
+# MAGIC   FROM extracted
+# MAGIC ),
+# MAGIC deduped AS (
+# MAGIC   SELECT *,
+# MAGIC     fields_extracted / 5.0 AS _data_quality_score,
+# MAGIC     ROW_NUMBER() OVER (PARTITION BY row_hash ORDER BY _silver_processed_timestamp DESC) AS row_num
+# MAGIC   FROM transformed
+# MAGIC )
+# MAGIC SELECT
+# MAGIC   image_path, file_name, invoice_number, invoice_date, total_amount, vendor_name, customer_name,
+# MAGIC   invoice_date_parsed, total_amount_parsed, vendor_name_clean, customer_name_clean,
+# MAGIC   fields_extracted, _data_quality_score, row_hash, _silver_processed_timestamp, _environment
+# MAGIC FROM deduped
+# MAGIC WHERE row_num = 1;
 
 # COMMAND ----------
 
-# Write to Silver Delta table
-(df_silver_deduped.write
-    .format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .option("delta.columnMapping.mode", "name")
-    .saveAsTable(SILVER_TABLE)
-)
-
-print(f"\n✓ Silver transformation complete!")
-print(f"✓ Data written to: {SILVER_TABLE}")
+# DBTITLE 1,Optimize Silver Table
+# MAGIC %sql
+# MAGIC -- Optimize and Z-order for faster queries
+# MAGIC OPTIMIZE invoice_analytics_dev.silver.invoices_clean
+# MAGIC ZORDER BY (vendor_name_clean, invoice_date_parsed, _data_quality_score);
 
 # COMMAND ----------
 

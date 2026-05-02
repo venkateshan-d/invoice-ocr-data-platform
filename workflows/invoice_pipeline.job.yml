@@ -16,6 +16,7 @@ resources:
             base_parameters:
               catalog_name: ${var.catalog_name}
               environment: ${var.environment}
+              test_mode: "false"  # Full production: process all 8,137 images
         
         - task_key: silver_transformation
           depends_on:
@@ -26,6 +27,8 @@ resources:
             base_parameters:
               catalog_name: ${var.catalog_name}
               environment: ${var.environment}
+              test_mode: "false"  # Full production: process all records
+              batch_size: "100"    # Process in batches of 100
         
         - task_key: gold_analytics
           depends_on:

@@ -195,19 +195,18 @@ summary_df = spark.table(GOLD_SUMMARY_TABLE)
 quality_df = spark.table(GOLD_QUALITY_TABLE)
 vendor_df = spark.table(GOLD_VENDOR_TABLE)
 
-# Bronze layer stats
-bronze_count = spark.table(f"{catalog_name}.bronze.invoices_raw_ocr").count()
-ocr_success = spark.table(f"{catalog_name}.bronze.invoices_raw_ocr").filter(col("has_error") == False).count()
+# Bronze layer stats (CSV ingestion)
+bronze_count = spark.table(f"{catalog_name}.bronze.invoices_raw_csv").count()
 
 # Silver layer stats
 silver_count = spark.table(SILVER_TABLE).count()
 high_quality = spark.table(SILVER_TABLE).filter(col("_data_quality_score") >= 0.8).count()
 
-print(f"\n📊 Pipeline Statistics:")
-print(f"  Bronze (Images Processed):  {bronze_count:,}")
-print(f"  OCR Success Rate:           {ocr_success/bronze_count*100:.1f}%")
-print(f"  Silver (Invoices Extracted): {silver_count:,}")
+print(f"\n📊 Pipeline Statistics (CSV Mode):")
+print(f"  Bronze (CSV Records):        {bronze_count:,}")
+print(f"  Silver (Transformed):        {silver_count:,}")
 print(f"  High Quality Extraction:     {high_quality:,} ({high_quality/silver_count*100:.1f}%)")
+print(f"  Processing Success Rate:     {silver_count/bronze_count*100:.1f}%")
 
 print(f"\n📝 Invoice Summary:")
 display(summary_df.limit(10))
@@ -244,6 +243,6 @@ print(f"GROUP BY vendor HAVING invoice_count > 5 ORDER BY avg_amount DESC;")
 
 print(f"\n✅ Gold layer processing complete!")
 print(f"\n📊 Deliverables Ready:")
-print(f"  ✓ Cleaned tables: Bronze → Silver → Gold")
+print(f"  ✓ Cleaned tables: Bronze (CSV) → Silver → Gold")
 print(f"  ✓ Data quality report: {GOLD_QUALITY_TABLE}")
 print(f"  ✓ Sample analytics queries: See above")

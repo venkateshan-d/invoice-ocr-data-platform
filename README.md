@@ -127,15 +127,16 @@ ORDER BY quality_tier;
 - **Duration**: 35m 30s
 - **Started**: May 02, 2026, 07:57 PM
 - **Ended**: May 02, 2026, 08:33 PM
-- **Compute**: Serverless (auto-scaling)
+- **Compute**: Serverless (auto-scaling)  <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/0cdf14ef-f9eb-438c-ad02-b942c278fd39" />
+
 
 ### Task Execution Summary
 
 | Task | Notebook | Status | Duration | Compute |
 |------|----------|--------|----------|----------|
-| **bronze_ingestion** | `notebooks/01_bronze_ingestion` | ✅ Succeeded | 51m 11s | Serverless |
-| **silver_transformation** | `notebooks/02_silver_transformation` | ✅ Succeeded | - | Serverless |
-| **gold_analytics** | `notebooks/03_gold_analytics` | ✅ Succeeded | - | Serverless |
+| **bronze_ingestion** | `notebooks/01_bronze_ingestion` | ✅ Succeeded  | Serverless |
+| **silver_transformation** | `notebooks/02_silver_transformation` | ✅ Succeeded  | Serverless |
+| **gold_analytics** | `notebooks/03_gold_analytics` | ✅ Succeeded  | Serverless |
 
 ### Data Lineage
 

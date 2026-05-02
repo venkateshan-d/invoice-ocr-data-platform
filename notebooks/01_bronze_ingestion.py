@@ -5,32 +5,9 @@
 # ///
 # DBTITLE 1,⚠️ IMPORTANT: Run Order
 # MAGIC %md
-# MAGIC # ⚠️ IMPORTANT: Execution Order
+# MAGIC # Bronze Layer - OCR Processing
 # MAGIC
-# MAGIC **Serverless-Compatible OCR**
-# MAGIC
-# MAGIC This notebook uses **Databricks AI functions** (`ai_parse_document`) for document parsing, which works natively on serverless compute without requiring Tesseract installation.
-# MAGIC
-# MAGIC **Simply run all cells in order.**
-# MAGIC
-# MAGIC ---
-
-# COMMAND ----------
-
-# DBTITLE 1,OCR UDF Function
-# MAGIC %md
-# MAGIC # Bronze Layer - Invoice Document Parsing with AI
-# MAGIC
-# MAGIC **Purpose**: Parse invoice images using Databricks AI functions
-# MAGIC
-# MAGIC **Method**: Uses `ai_parse_document()` to extract structured content from images
-# MAGIC - **No Tesseract required** - works on serverless compute
-# MAGIC - Extracts text, tables, and document structure
-# MAGIC - Stores parsed VARIANT for downstream processing
-# MAGIC
-# MAGIC **Input**: `/Volumes/invoice_analytics_dev/bronze/raw_data/*.jpg`
-# MAGIC
-# MAGIC **Output**: `invoice_analytics_dev.bronze.invoices_raw_ocr`
+# MAGIC Parses invoice images using Databricks AI functions.
 
 # COMMAND ----------
 

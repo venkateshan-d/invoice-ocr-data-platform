@@ -9,19 +9,9 @@
 
 # DBTITLE 1,Gold Layer - Invoice Analytics
 # MAGIC %md
-# MAGIC # Gold Layer - Invoice Analytics
+# MAGIC # Gold Layer - Analytics
 # MAGIC
-# MAGIC **Purpose**: Create business-ready analytics tables from invoice data
-# MAGIC
-# MAGIC **Tables Created**:
-# MAGIC - `invoice_summary`: Aggregated invoice metrics by vendor, date
-# MAGIC - `data_quality_metrics`: OCR and extraction quality monitoring
-# MAGIC - `processing_stats`: Pipeline health and completeness
-# MAGIC - `vendor_analytics`: Vendor-level insights
-# MAGIC
-# MAGIC **Input**: `invoice_analytics_dev.silver.invoices_clean`
-# MAGIC
-# MAGIC **Outputs**: Multiple gold-layer analytics tables
+# MAGIC Creates business-ready analytics tables.
 
 # COMMAND ----------
 
@@ -105,15 +95,6 @@ display(df_invoice_summary.limit(10))
 
 # COMMAND ----------
 
-# DBTITLE 1,Optimize Gold Tables
-# MAGIC %sql
-# MAGIC -- Optimize all gold tables for fast queries
-# MAGIC OPTIMIZE invoice_analytics_dev.gold.invoice_summary ZORDER BY (invoice_month, vendor);
-# MAGIC OPTIMIZE invoice_analytics_dev.gold.vendor_analytics ZORDER BY (total_revenue, vendor_name);
-# MAGIC OPTIMIZE invoice_analytics_dev.gold.data_quality_metrics ZORDER BY (quality_tier);
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC ## Create Data Quality Metrics Table
 
@@ -187,6 +168,15 @@ df_quality_metrics = (df_silver
 print(f"✓ Created {GOLD_QUALITY_TABLE}")
 print(f"\nData Quality Distribution:")
 display(df_quality_metrics)
+
+# COMMAND ----------
+
+# DBTITLE 1,Optimize Gold Tables
+# MAGIC %sql
+# MAGIC -- Optimize all gold tables for fast queries
+# MAGIC OPTIMIZE invoice_analytics_dev.gold.invoice_summary ZORDER BY (invoice_month, vendor);
+# MAGIC OPTIMIZE invoice_analytics_dev.gold.vendor_analytics ZORDER BY (total_revenue, vendor_name);
+# MAGIC OPTIMIZE invoice_analytics_dev.gold.data_quality_metrics ZORDER BY (quality_tier);
 
 # COMMAND ----------
 

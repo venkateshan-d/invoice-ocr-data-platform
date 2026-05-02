@@ -9,19 +9,9 @@
 
 # DBTITLE 1,Silver Layer - Invoice Data Extraction
 # MAGIC %md
-# MAGIC # Silver Layer - Invoice Data Extraction with AI
+# MAGIC # Silver Layer - Field Extraction
 # MAGIC
-# MAGIC **Purpose**: Extract structured invoice fields from parsed documents using AI
-# MAGIC
-# MAGIC **Method**: Chain `ai_parse_document` → `ai_extract` for intelligent field extraction
-# MAGIC - Extracts invoice_number, date, total_amount, vendor, customer
-# MAGIC - Validates and standardizes data types
-# MAGIC - Calculates data quality scores
-# MAGIC - Deduplicates records
-# MAGIC
-# MAGIC **Input**: `invoice_analytics_dev.bronze.invoices_raw_ocr` (parsed documents)
-# MAGIC
-# MAGIC **Output**: `invoice_analytics_dev.silver.invoices_clean`
+# MAGIC Extracts structured invoice fields using AI.
 
 # COMMAND ----------
 
@@ -63,15 +53,6 @@ print(f"Bronze schema: {len(df_bronze.columns)} columns")
 # DBTITLE 1,Extract Invoice Fields from OCR Text
 # MAGIC %md
 # MAGIC ## Extract Invoice Fields with AI
-# MAGIC
-# MAGIC Use `ai_extract()` to intelligently extract:
-# MAGIC - Invoice Number
-# MAGIC - Invoice Date  
-# MAGIC - Total Amount
-# MAGIC - Vendor Name
-# MAGIC - Customer Name
-# MAGIC
-# MAGIC The AI understands document structure and can handle various invoice formats.
 
 # COMMAND ----------
 

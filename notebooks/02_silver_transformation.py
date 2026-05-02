@@ -105,6 +105,7 @@ print(f"   Estimated time: ~{(records_to_process / 100) * 2:.0f} minutes")
 
 # DBTITLE 1,Parse OCR Text and Extract Fields
 from pyspark.sql.functions import monotonically_increasing_id
+import builtins  # Preserve Python's built-in min/max
 
 # Add row numbers for batch processing
 df_bronze_numbered = df_bronze.withColumn("_batch_row_id", monotonically_increasing_id())
@@ -123,7 +124,7 @@ errors_list = []
 
 for batch_num in range(num_batches):
     batch_start = batch_num * batch_size
-    batch_end = min(batch_start + batch_size, total_records)
+    batch_end = builtins.min(batch_start + batch_size, total_records)  # Use Python's built-in min
     
     print(f"\n{'='*80}")
     print(f"📦 Batch {batch_num + 1}/{num_batches} | Records {batch_start:,} to {batch_end:,}")

@@ -78,54 +78,34 @@ print(f"Target Table: {BRONZE_TABLE}")
 # COMMAND ----------
 
 # DBTITLE 1,Read Images with Auto Loader
-# Read image files using READ_FILES
-df_images = spark.read.format("binaryFile").load(VOLUME_PATH)
-
-image_count = df_images.count()
-print(f"✓ Loaded {image_count:,} invoice images")
-print(f"✓ Processing with ai_parse_document()")
-
-# COMMAND ----------
-
-# DBTITLE 1,Apply OCR Transformation
-# Parse documents using Databricks AI function
-df_bronze = (df_images
-    .withColumn("file_name", element_at(split(col("path"), "/"), -1))
-    .withColumn("parsed_content", expr("ai_parse_document(content, MAP('version', '2.0'))"))
-    .withColumn("has_error", col("parsed_content.error_status").isNotNull())
-    .withColumn("page_count", size(col("parsed_content.document.pages")))
-    .withColumn("element_count", size(col("parsed_content.document.elements")))
-    .withColumn("_load_timestamp", current_timestamp())
-    .withColumn("_environment", lit(environment))
-    .select(
-        col("path").alias("image_path"),
-        col("file_name"),
-        col("parsed_content"),
-        col("has_error"),
-        col("page_count"),
-        col("element_count"),
-        col("length").alias("file_size_bytes"),
-        col("modificationTime").alias("file_modified_time"),
-        col("_load_timestamp"),
-        col("_environment")
-    )
-)
-
-print("✓ Document parsing applied")
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TABLE invoice_analytics_dev.bronze.invoices_raw_ocr
+# MAGIC AS
+# MAGIC SELECT
+# MAGIC   path AS image_path,
+# MAGIC   regexp_extract(path, '[^/]+$', 0) AS file_name,
+# MAGIC   ai_parse_document(content, MAP('version', '2.0')) AS parsed_content,
+# MAGIC   try_cast(ai_parse_document(content, MAP('version', '2.0')):error_status AS STRING) IS NOT NULL AS has_error,
+# MAGIC   size(try_cast(ai_parse_document(content, MAP('version', '2.0')):document:pages AS ARRAY<VARIANT>)) AS page_count,
+# MAGIC   size(try_cast(ai_parse_document(content, MAP('version', '2.0')):document:elements AS ARRAY<VARIANT>)) AS element_count,
+# MAGIC   length AS file_size_bytes,
+# MAGIC   modificationTime AS file_modified_time,
+# MAGIC   current_timestamp() AS _load_timestamp,
+# MAGIC   'dev' AS _environment
+# MAGIC FROM READ_FILES(
+# MAGIC   '/Volumes/invoice_analytics_dev/bronze/raw_data/',
+# MAGIC   format => 'binaryFile'
+# MAGIC );
 
 # COMMAND ----------
 
 # DBTITLE 1,Write to Bronze Table
-# Write to Bronze Delta table
-(df_bronze.write
-    .format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable(BRONZE_TABLE)
-)
-
+# Verify table was created
 print(f"\n✓ Bronze ingestion complete!")
 print(f"✓ Data written to: {BRONZE_TABLE}")
+print(f"\nVerifying table...")
+row_count = spark.table(BRONZE_TABLE).count()
+print(f"✓ Table contains {row_count:,} records")
 
 # COMMAND ----------
 

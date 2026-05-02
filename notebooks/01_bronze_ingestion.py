@@ -7,36 +7,30 @@
 # MAGIC %md
 # MAGIC # ⚠️ IMPORTANT: Execution Order
 # MAGIC
-# MAGIC **Before running this notebook:**
+# MAGIC **Serverless-Compatible OCR**
 # MAGIC
-# MAGIC 1. **First**, run **Cell 7 (Install OCR Dependencies)** to install pytesseract and PIL
-# MAGIC 2. **Then**, run cells in order from Cell 1 onwards
+# MAGIC This notebook uses **Databricks AI functions** (`ai_parse_document`) for document parsing, which works natively on serverless compute without requiring Tesseract installation.
 # MAGIC
-# MAGIC **Or**: Run all cells - the notebook will restart Python after installing dependencies
+# MAGIC **Simply run all cells in order.**
 # MAGIC
 # MAGIC ---
 
 # COMMAND ----------
 
 # DBTITLE 1,OCR UDF Function
-from pyspark.sql.functions import udf
-from pyspark.sql.types import StringType
-import pytesseract
-from PIL import Image
-import io
-
-@udf(returnType=StringType())
-def extract_text_from_image(image_bytes):
-    try:
-        if image_bytes is None:
-            return None
-        image = Image.open(io.BytesIO(image_bytes))
-        text = pytesseract.image_to_string(image)
-        return text.strip()
-    except Exception as e:
-        return f"OCR_ERROR: {str(e)}"
-
-print("✓ OCR function registered")
+# MAGIC %md
+# MAGIC # Bronze Layer - Invoice Document Parsing with AI
+# MAGIC
+# MAGIC **Purpose**: Parse invoice images using Databricks AI functions
+# MAGIC
+# MAGIC **Method**: Uses `ai_parse_document()` to extract structured content from images
+# MAGIC - **No Tesseract required** - works on serverless compute
+# MAGIC - Extracts text, tables, and document structure
+# MAGIC - Stores parsed VARIANT for downstream processing
+# MAGIC
+# MAGIC **Input**: `/Volumes/invoice_analytics_dev/bronze/raw_data/*.jpg`
+# MAGIC
+# MAGIC **Output**: `invoice_analytics_dev.bronze.invoices_raw_ocr`
 
 # COMMAND ----------
 
@@ -84,34 +78,32 @@ print(f"Target Table: {BRONZE_TABLE}")
 # COMMAND ----------
 
 # DBTITLE 1,Read Images with Auto Loader
-# Read image files with Auto Loader (binaryFile format)
-df_images = (spark.readStream
-    .format("cloudFiles")
-    .option("cloudFiles.format", "binaryFile")
-    .option("pathGlobFilter", "*.{jpg,jpeg,png,JPG,JPEG,PNG}")
-    .option("cloudFiles.schemaLocation", CHECKPOINT_PATH + "schema")
-    .load(VOLUME_PATH)
-    .withColumn("file_name", element_at(split(col("path"), "/"), -1))
-    .withColumn("_load_timestamp", current_timestamp())
-    .withColumn("_environment", lit(environment))
-)
+# Read image files using READ_FILES
+df_images = spark.read.format("binaryFile").load(VOLUME_PATH)
 
-print("✓ Auto Loader configured for images")
+image_count = df_images.count()
+print(f"✓ Loaded {image_count:,} invoice images")
+print(f"✓ Processing with ai_parse_document()")
 
 # COMMAND ----------
 
 # DBTITLE 1,Apply OCR Transformation
-# Apply OCR to extract text from images
+# Parse documents using Databricks AI function
 df_bronze = (df_images
-    .withColumn("ocr_text", extract_text_from_image(col("content")))
-    .withColumn("text_length", length(col("ocr_text")))
-    .withColumn("has_error", col("ocr_text").startswith("OCR_ERROR"))
+    .withColumn("file_name", element_at(split(col("path"), "/"), -1))
+    .withColumn("parsed_content", expr("ai_parse_document(content, MAP('version', '2.0'))"))
+    .withColumn("has_error", col("parsed_content.error_status").isNotNull())
+    .withColumn("page_count", size(col("parsed_content.document.pages")))
+    .withColumn("element_count", size(col("parsed_content.document.elements")))
+    .withColumn("_load_timestamp", current_timestamp())
+    .withColumn("_environment", lit(environment))
     .select(
         col("path").alias("image_path"),
         col("file_name"),
-        col("ocr_text"),
-        col("text_length"),
+        col("parsed_content"),
         col("has_error"),
+        col("page_count"),
+        col("element_count"),
         col("length").alias("file_size_bytes"),
         col("modificationTime").alias("file_modified_time"),
         col("_load_timestamp"),
@@ -119,28 +111,18 @@ df_bronze = (df_images
     )
 )
 
-print("✓ OCR transformation applied")
+print("✓ Document parsing applied")
 
 # COMMAND ----------
 
-# DBTITLE 1,Install OCR Dependencies
-# Install pytesseract and PIL for OCR
-%pip install pytesseract pillow --quiet
-dbutils.library.restartPython()
-
-# COMMAND ----------
-
-# Write to Bronze Delta table with checkpointing
-query = (df_bronze.writeStream
+# DBTITLE 1,Write to Bronze Table
+# Write to Bronze Delta table
+(df_bronze.write
     .format("delta")
-    .outputMode("append")
-    .option("checkpointLocation", CHECKPOINT_PATH)
-    .option("mergeSchema", "true")
-    .trigger(availableNow=True)  # Process all available files then stop
-    .table(BRONZE_TABLE)
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .saveAsTable(BRONZE_TABLE)
 )
-
-query.awaitTermination()
 
 print(f"\n✓ Bronze ingestion complete!")
 print(f"✓ Data written to: {BRONZE_TABLE}")
@@ -148,23 +130,27 @@ print(f"✓ Data written to: {BRONZE_TABLE}")
 # COMMAND ----------
 
 # DBTITLE 1,Verify OCR Results
-# Verify OCR ingestion
+# Verify document parsing
 df_bronze_table = spark.table(BRONZE_TABLE)
 row_count = df_bronze_table.count()
 error_count = df_bronze_table.filter(col("has_error") == True).count()
 success_count = row_count - error_count
 success_rate = (success_count / row_count * 100) if row_count > 0 else 0
-avg_text_len = df_bronze_table.agg(avg("text_length")).collect()[0][0]
+avg_page_count = df_bronze_table.agg(avg("page_count")).collect()[0][0]
+avg_element_count = df_bronze_table.agg(avg("element_count")).collect()[0][0]
 
 print("="*80)
-print("BRONZE LAYER OCR STATISTICS")
+print("BRONZE LAYER DOCUMENT PARSING STATISTICS")
 print("="*80)
-print(f"Total images processed: {row_count:,}")
-print(f"OCR successful: {success_count:,}")
-print(f"OCR errors: {error_count:,}")
+print(f"Total documents processed: {row_count:,}")
+print(f"Parsing successful: {success_count:,}")
+print(f"Parsing errors: {error_count:,}")
 print(f"Success rate: {success_rate:.2f}%")
-print(f"Avg text length: {avg_text_len:.0f} characters")
+print(f"Avg pages per document: {avg_page_count:.1f}")
+print(f"Avg elements extracted: {avg_element_count:.1f}")
 print(f"Table: {BRONZE_TABLE}")
 print("="*80)
 
-display(df_bronze_table.select("file_name", "text_length", "has_error", "ocr_text").limit(10))
+# Show sample parsed documents
+print("\nSample Parsed Documents:")
+display(df_bronze_table.select("file_name", "page_count", "element_count", "has_error").limit(10))

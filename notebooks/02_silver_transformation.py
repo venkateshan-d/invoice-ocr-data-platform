@@ -9,18 +9,17 @@
 
 # DBTITLE 1,Silver Layer - Invoice Data Extraction
 # MAGIC %md
-# MAGIC # Silver Layer - Invoice Data Extraction from OCR Text
+# MAGIC # Silver Layer - Invoice Data Extraction with AI
 # MAGIC
-# MAGIC **Purpose**: Parse raw OCR text and extract structured invoice fields
+# MAGIC **Purpose**: Extract structured invoice fields from parsed documents using AI
 # MAGIC
-# MAGIC **Transformations**:
-# MAGIC - Extract invoice fields using regex patterns (invoice_id, date, amount, vendor, etc.)
-# MAGIC - Data type validation and standardization
-# MAGIC - Data quality scoring
-# MAGIC - Deduplication based on content hash
-# MAGIC - Business rule validations
+# MAGIC **Method**: Chain `ai_parse_document` → `ai_extract` for intelligent field extraction
+# MAGIC - Extracts invoice_number, date, total_amount, vendor, customer
+# MAGIC - Validates and standardizes data types
+# MAGIC - Calculates data quality scores
+# MAGIC - Deduplicates records
 # MAGIC
-# MAGIC **Input**: `invoice_analytics_dev.bronze.invoices_raw_ocr`
+# MAGIC **Input**: `invoice_analytics_dev.bronze.invoices_raw_ocr` (parsed documents)
 # MAGIC
 # MAGIC **Output**: `invoice_analytics_dev.silver.invoices_clean`
 
@@ -52,8 +51,9 @@ print(f"Target: {SILVER_TABLE}")
 
 # COMMAND ----------
 
-# Read bronze data
-df_bronze = spark.table(BRONZE_TABLE)
+# DBTITLE 1,Read Bronze Data
+# Read bronze data (successfully parsed documents only)
+df_bronze = spark.table(BRONZE_TABLE).filter(col("has_error") == False)
 
 print(f"Bronze records: {df_bronze.count():,}")
 print(f"Bronze schema: {len(df_bronze.columns)} columns")
@@ -62,75 +62,80 @@ print(f"Bronze schema: {len(df_bronze.columns)} columns")
 
 # DBTITLE 1,Extract Invoice Fields from OCR Text
 # MAGIC %md
-# MAGIC ## Extract Invoice Fields from OCR Text
+# MAGIC ## Extract Invoice Fields with AI
 # MAGIC
-# MAGIC Use regex patterns to extract:
-# MAGIC - Invoice Number/ID
-# MAGIC - Invoice Date
+# MAGIC Use `ai_extract()` to intelligently extract:
+# MAGIC - Invoice Number
+# MAGIC - Invoice Date  
 # MAGIC - Total Amount
-# MAGIC - Vendor/Company Name
-# MAGIC - Customer Details
+# MAGIC - Vendor Name
+# MAGIC - Customer Name
+# MAGIC
+# MAGIC The AI understands document structure and can handle various invoice formats.
 
 # COMMAND ----------
 
 # DBTITLE 1,Parse OCR Text and Extract Fields
-import re
-
-# Read bronze OCR data (only successful OCR)
-df_bronze = spark.table(BRONZE_TABLE).filter(col("has_error") == False)
-
-print(f"Bronze OCR records: {df_bronze.count():,}")
-
-# Define regex patterns for invoice field extraction
-patterns = {
-    "invoice_number": r"(?:Invoice|Invoice\s*No|Invoice\s*Number|INV)[:\s#]*([A-Z0-9-]+)",
-    "invoice_date": r"(?:Date|Invoice\s*Date|Dated)[:\s]*([0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{2,4})",
-    "total_amount": r"(?:Total|Amount|Grand\s*Total|Total\s*Amount)[:\s$]*([0-9,]+\.?[0-9]{0,2})",
-    "vendor_name": r"^([A-Z][A-Za-z\s&]+(?:Inc|LLC|Ltd|Corporation|Corp)?)",
-    "customer_name": r"(?:Bill\s*To|Customer)[:\s]*([A-Z][A-Za-z\s]+)"
+# Define invoice schema for extraction
+invoice_schema = '''
+{
+  "invoice_number": {"type": "string", "description": "Invoice or reference number"},
+  "invoice_date": {"type": "string", "description": "Invoice date in any format"},
+  "total_amount": {"type": "number", "description": "Total invoice amount or grand total"},
+  "vendor_name": {"type": "string", "description": "Vendor, seller, or company name"},
+  "customer_name": {"type": "string", "description": "Customer, buyer, or bill-to name"}
 }
+'''
 
-# UDF to extract field using regex
-from pyspark.sql.functions import udf
-from pyspark.sql.types import StringType
+# Extract structured fields using AI
+df_extracted = df_bronze.withColumn(
+    "extracted_fields",
+    expr(f"""
+        ai_extract(
+            parsed_content,
+            '{invoice_schema}',
+            MAP('version', '2.0', 'instructions', 'Extract invoice details from this document.')
+        )
+    """)
+)
 
-@udf(returnType=StringType())
-def extract_field(text, pattern):
-    if text is None:
-        return None
-    match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
-    return match.group(1).strip() if match else None
-
-# Apply field extraction
-df_extracted = df_bronze
-for field_name, pattern in patterns.items():
-    df_extracted = df_extracted.withColumn(field_name, extract_field(col("ocr_text"), lit(pattern)))
-
-print("✓ Field extraction applied")
+print("✓ AI extraction applied")
+print(f"Records to process: {df_extracted.count():,}")
 
 # COMMAND ----------
 
 # DBTITLE 1,Apply Data Quality Transformations
-# Clean and standardize extracted fields
+# Parse extracted JSON and create typed columns
 df_silver = (df_extracted
-    # Parse invoice date
-    .withColumn("invoice_date_parsed", 
-        when(col("invoice_date").isNotNull(), 
-             to_date(regexp_replace(col("invoice_date"), r"[-/]", "-"), "MM-dd-yyyy"))
-        .otherwise(to_date(regexp_replace(col("invoice_date"), r"[-/]", "-"), "dd-MM-yyyy")))
+    # Extract fields from JSON
+    .withColumn("invoice_number", col("extracted_fields.invoice_number"))
+    .withColumn("invoice_date", col("extracted_fields.invoice_date"))
+    .withColumn("total_amount", col("extracted_fields.total_amount"))
+    .withColumn("vendor_name", col("extracted_fields.vendor_name"))
+    .withColumn("customer_name", col("extracted_fields.customer_name"))
     
-    # Parse total amount (remove commas and convert to decimal)
-    .withColumn("total_amount_parsed", 
+    # Parse invoice date (try multiple formats)
+    .withColumn("invoice_date_parsed",
+        coalesce(
+            to_date(col("invoice_date"), "MM/dd/yyyy"),
+            to_date(col("invoice_date"), "dd/MM/yyyy"),
+            to_date(col("invoice_date"), "yyyy-MM-dd"),
+            to_date(col("invoice_date"), "MM-dd-yyyy"),
+            to_date(col("invoice_date"), "dd-MM-yyyy")
+        ))
+    
+    # Clean and cast total amount
+    .withColumn("total_amount_parsed",
         when(col("total_amount").isNotNull(),
-             regexp_replace(col("total_amount"), ",", "").cast("decimal(10,2)"))
+             col("total_amount").cast("decimal(10,2)"))
         .otherwise(lit(None)))
     
     # Clean vendor and customer names
     .withColumn("vendor_name_clean", upper(trim(col("vendor_name"))))
     .withColumn("customer_name_clean", upper(trim(col("customer_name"))))
     
-    # Calculate field completeness
-    .withColumn("fields_extracted", 
+    # Calculate field completeness (0-5)
+    .withColumn("fields_extracted",
         (when(col("invoice_number").isNotNull(), 1).otherwise(0) +
          when(col("invoice_date_parsed").isNotNull(), 1).otherwise(0) +
          when(col("total_amount_parsed").isNotNull(), 1).otherwise(0) +
@@ -140,12 +145,12 @@ df_silver = (df_extracted
     # Data quality score (0.0 to 1.0)
     .withColumn("_data_quality_score", col("fields_extracted") / 5.0)
     
-    # Add row hash for deduplication
-    .withColumn("row_hash", 
-        sha2(concat_ws("||", 
+    # Row hash for deduplication
+    .withColumn("row_hash",
+        sha2(concat_ws("||",
             coalesce(col("invoice_number"), lit("")),
             coalesce(col("invoice_date"), lit("")),
-            coalesce(col("total_amount"), lit(""))), 256))
+            coalesce(col("total_amount").cast("string"), lit(""))), 256))
     
     # Add silver metadata
     .withColumn("_silver_processed_timestamp", current_timestamp())
@@ -153,6 +158,27 @@ df_silver = (df_extracted
 )
 
 print("✓ Data quality transformations applied")
+
+# COMMAND ----------
+
+# DBTITLE 1,Deduplicate Records
+# Deduplicate based on row_hash (keep most recent)
+window_spec = Window.partitionBy("row_hash").orderBy(col("_silver_processed_timestamp").desc())
+
+df_silver_deduped = (df_silver
+    .withColumn("row_num", row_number().over(window_spec))
+    .filter(col("row_num") == 1)
+    .drop("row_num")
+)
+
+original_count = df_silver.count()
+deduped_count = df_silver_deduped.count()
+duplicates_removed = original_count - deduped_count
+
+print(f"Original records: {original_count:,}")
+print(f"After deduplication: {deduped_count:,}")
+print(f"Duplicates removed: {duplicates_removed:,}")
+print(f"✓ Deduplication complete")
 
 # COMMAND ----------
 

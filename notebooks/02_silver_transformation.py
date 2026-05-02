@@ -491,18 +491,29 @@ if total_invoices > 0:
     print(f"   Medium Quality (0.6-0.8): {medium_quality_count:,} ({medium_quality_count/total_invoices*100:.1f}%)")
     print(f"   Low Quality (< 0.6):      {low_quality_count:,} ({low_quality_count/total_invoices*100:.1f}%)")
     
-    # Sample clean records
+    # Sample clean records - removed _batch_number to fix UNRESOLVED_COLUMN error
     print(f"\n👁️ Sample of High-Quality Extracted Data:")
     display(df_silver_final.select(
         "file_name", "invoice_number", "invoice_date_parsed", 
-        "total_amount_parsed", "vendor_name_clean", "_data_quality_score", "_batch_number"
+        "total_amount_parsed", "vendor_name_clean", "_data_quality_score"
     ).filter(col("_data_quality_score") >= 0.6).orderBy(col("_data_quality_score").desc()).limit(10))
     
-    print(f"\n" + "="*80)
-    print("✅ Silver transformation complete!")
-    print(f"   Ready for gold layer analytics")
-    print(f"   Next: Run 03_gold_analytics notebook")
-    print("="*80)
+    # Vendor summary
+    print(f"\n🏢 Top Vendors by Invoice Count:")
+    vendor_summary = df_silver_final.filter(col("vendor_name_clean").isNotNull()) \
+        .groupBy("vendor_name_clean") \
+        .agg(
+            count("*").alias("invoice_count"),
+            sum("total_amount_parsed").alias("total_revenue"),
+            avg("total_amount_parsed").alias("avg_invoice_amount")
+        ) \
+        .orderBy(col("invoice_count").desc()) \
+        .limit(10)
+    display(vendor_summary)
+    
 else:
-    print(f"\n⚠️  No records in silver table!")
-    print(f"   Check error logs: {SILVER_ERRORS_TABLE}")
+    print("\n⚠️  No records found in silver table!")
+
+print("\n" + "="*80)
+print("✅ SILVER TRANSFORMATION COMPLETE")
+print("="*80)

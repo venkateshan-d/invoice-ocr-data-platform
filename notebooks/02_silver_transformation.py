@@ -77,7 +77,7 @@ print(f"Bronze schema: {len(df_bronze.columns)} columns")
 
 # DBTITLE 1,Parse OCR Text and Extract Fields
 # MAGIC %sql
-# MAGIC -- Optimized: Single SQL query with ai_extract
+# MAGIC -- Optimized: Single SQL query with ai_extract (VARIANT field access fixed)
 # MAGIC CREATE OR REPLACE TABLE invoice_analytics_dev.silver.invoices_clean
 # MAGIC AS
 # MAGIC WITH extracted AS (
@@ -107,39 +107,42 @@ print(f"Bronze schema: {len(df_bronze.columns)} columns")
 # MAGIC   SELECT
 # MAGIC     image_path,
 # MAGIC     file_name,
-# MAGIC     extracted_fields.invoice_number AS invoice_number,
-# MAGIC     extracted_fields.invoice_date AS invoice_date,
-# MAGIC     extracted_fields.total_amount AS total_amount,
-# MAGIC     extracted_fields.vendor_name AS vendor_name,
-# MAGIC     extracted_fields.customer_name AS customer_name,
+# MAGIC     -- Use COLON notation for VARIANT type (not dot notation)
+# MAGIC     try_cast(extracted_fields:invoice_number AS STRING) AS invoice_number,
+# MAGIC     try_cast(extracted_fields:invoice_date AS STRING) AS invoice_date,
+# MAGIC     try_cast(extracted_fields:total_amount AS DOUBLE) AS total_amount,
+# MAGIC     try_cast(extracted_fields:vendor_name AS STRING) AS vendor_name,
+# MAGIC     try_cast(extracted_fields:customer_name AS STRING) AS customer_name,
 # MAGIC     -- Parse date (multiple formats)
 # MAGIC     COALESCE(
-# MAGIC       try_to_date(extracted_fields.invoice_date, 'MM/dd/yyyy'),
-# MAGIC       try_to_date(extracted_fields.invoice_date, 'dd/MM/yyyy'),
-# MAGIC       try_to_date(extracted_fields.invoice_date, 'yyyy-MM-dd'),
-# MAGIC       try_to_date(extracted_fields.invoice_date, 'MM-dd-yyyy'),
-# MAGIC       try_to_date(extracted_fields.invoice_date, 'dd-MM-yyyy')
+# MAGIC       try_to_date(try_cast(extracted_fields:invoice_date AS STRING), 'MM/dd/yyyy'),
+# MAGIC       try_to_date(try_cast(extracted_fields:invoice_date AS STRING), 'dd/MM/yyyy'),
+# MAGIC       try_to_date(try_cast(extracted_fields:invoice_date AS STRING), 'yyyy-MM-dd'),
+# MAGIC       try_to_date(try_cast(extracted_fields:invoice_date AS STRING), 'MM-dd-yyyy'),
+# MAGIC       try_to_date(try_cast(extracted_fields:invoice_date AS STRING), 'dd-MM-yyyy')
 # MAGIC     ) AS invoice_date_parsed,
 # MAGIC     -- Cast amount
-# MAGIC     CAST(extracted_fields.total_amount AS DECIMAL(10,2)) AS total_amount_parsed,
+# MAGIC     CAST(try_cast(extracted_fields:total_amount AS DOUBLE) AS DECIMAL(10,2)) AS total_amount_parsed,
 # MAGIC     -- Clean names
-# MAGIC     UPPER(TRIM(extracted_fields.vendor_name)) AS vendor_name_clean,
-# MAGIC     UPPER(TRIM(extracted_fields.customer_name)) AS customer_name_clean,
+# MAGIC     UPPER(TRIM(try_cast(extracted_fields:vendor_name AS STRING))) AS vendor_name_clean,
+# MAGIC     UPPER(TRIM(try_cast(extracted_fields:customer_name AS STRING))) AS customer_name_clean,
 # MAGIC     -- Field completeness
 # MAGIC     (
-# MAGIC       CASE WHEN extracted_fields.invoice_number IS NOT NULL THEN 1 ELSE 0 END +
-# MAGIC       CASE WHEN try_to_date(extracted_fields.invoice_date, 'MM/dd/yyyy') IS NOT NULL OR
-# MAGIC                 try_to_date(extracted_fields.invoice_date, 'dd/MM/yyyy') IS NOT NULL OR
-# MAGIC                 try_to_date(extracted_fields.invoice_date, 'yyyy-MM-dd') IS NOT NULL THEN 1 ELSE 0 END +
-# MAGIC       CASE WHEN extracted_fields.total_amount IS NOT NULL THEN 1 ELSE 0 END +
-# MAGIC       CASE WHEN extracted_fields.vendor_name IS NOT NULL THEN 1 ELSE 0 END +
-# MAGIC       CASE WHEN extracted_fields.customer_name IS NOT NULL THEN 1 ELSE 0 END
+# MAGIC       CASE WHEN try_cast(extracted_fields:invoice_number AS STRING) IS NOT NULL THEN 1 ELSE 0 END +
+# MAGIC       CASE WHEN COALESCE(
+# MAGIC         try_to_date(try_cast(extracted_fields:invoice_date AS STRING), 'MM/dd/yyyy'),
+# MAGIC         try_to_date(try_cast(extracted_fields:invoice_date AS STRING), 'dd/MM/yyyy'),
+# MAGIC         try_to_date(try_cast(extracted_fields:invoice_date AS STRING), 'yyyy-MM-dd')
+# MAGIC       ) IS NOT NULL THEN 1 ELSE 0 END +
+# MAGIC       CASE WHEN try_cast(extracted_fields:total_amount AS DOUBLE) IS NOT NULL THEN 1 ELSE 0 END +
+# MAGIC       CASE WHEN try_cast(extracted_fields:vendor_name AS STRING) IS NOT NULL THEN 1 ELSE 0 END +
+# MAGIC       CASE WHEN try_cast(extracted_fields:customer_name AS STRING) IS NOT NULL THEN 1 ELSE 0 END
 # MAGIC     ) AS fields_extracted,
 # MAGIC     -- Row hash for deduplication
 # MAGIC     sha2(CONCAT_WS('||',
-# MAGIC       COALESCE(extracted_fields.invoice_number, ''),
-# MAGIC       COALESCE(extracted_fields.invoice_date, ''),
-# MAGIC       COALESCE(CAST(extracted_fields.total_amount AS STRING), '')
+# MAGIC       COALESCE(try_cast(extracted_fields:invoice_number AS STRING), ''),
+# MAGIC       COALESCE(try_cast(extracted_fields:invoice_date AS STRING), ''),
+# MAGIC       COALESCE(CAST(try_cast(extracted_fields:total_amount AS DOUBLE) AS STRING), '')
 # MAGIC     ), 256) AS row_hash,
 # MAGIC     current_timestamp() AS _silver_processed_timestamp,
 # MAGIC     'dev' AS _environment

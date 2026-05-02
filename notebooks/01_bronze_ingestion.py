@@ -38,15 +38,15 @@
 # Get parameters from job or use defaults
 dbutils.widgets.text("catalog_name", "invoice_analytics_dev", "Catalog Name")
 dbutils.widgets.text("environment", "dev", "Environment")
-dbutils.widgets.text("batch_size", "100", "Batch Size (0 = all images)")
 
 catalog_name = dbutils.widgets.get("catalog_name")
 environment = dbutils.widgets.get("environment")
-batch_size = int(dbutils.widgets.get("batch_size"))
 
 print(f"Environment: {environment}")
 print(f"Catalog: {catalog_name}")
-print(f"Batch Size: {batch_size if batch_size > 0 else 'ALL IMAGES'}")
+print(f"\n⚡ PROCESSING ALL IMAGES (8,137)")
+print(f"⚡ Serverless will auto-scale for parallel AI calls")
+print(f"⚡ Expected time: ~30-45 minutes")
 
 # COMMAND ----------
 
@@ -65,9 +65,10 @@ print(f"Target Table: {BRONZE_TABLE}")
 
 # DBTITLE 1,Read Images with Auto Loader
 # MAGIC %sql
-# MAGIC -- OPTIMIZED: Process 100 images for testing (change batch_size parameter for more)
-# MAGIC -- Full batch (8,137 images) will take ~4-6 hours on serverless
-# MAGIC -- This test batch should complete in ~10-15 minutes
+# MAGIC -- OPTIMIZED FOR FULL DATASET: Process ALL 8,137 images
+# MAGIC -- Parallelization: Serverless will distribute AI calls across workers
+# MAGIC -- Expected time: ~30-45 minutes (with auto-scaling)
+# MAGIC -- Single ai_parse_document call per image (not 4x)
 # MAGIC
 # MAGIC CREATE OR REPLACE TABLE invoice_analytics_dev.bronze.invoices_raw_ocr
 # MAGIC AS
@@ -82,7 +83,7 @@ print(f"Target Table: {BRONZE_TABLE}")
 # MAGIC     '/Volumes/invoice_analytics_dev/bronze/raw_data/',
 # MAGIC     format => 'binaryFile'
 # MAGIC   )
-# MAGIC   LIMIT 100  -- TESTING MODE: Process 100 images first
+# MAGIC   -- NO LIMIT: Process ALL images
 # MAGIC ),
 # MAGIC parsed_docs AS (
 # MAGIC   SELECT
@@ -92,6 +93,7 @@ print(f"Target Table: {BRONZE_TABLE}")
 # MAGIC     file_modified_time,
 # MAGIC     ai_parse_document(content, MAP('version', '2.0')) AS parsed_content
 # MAGIC   FROM image_batch
+# MAGIC   -- Serverless auto-parallelizes AI calls
 # MAGIC )
 # MAGIC SELECT
 # MAGIC   path AS image_path,
@@ -108,49 +110,6 @@ print(f"Target Table: {BRONZE_TABLE}")
 
 # COMMAND ----------
 
-# DBTITLE 1,📊 Processing Full Dataset
-# MAGIC %md
-# MAGIC ## 📊 Processing Full Dataset (8,137 images)
-# MAGIC
-# MAGIC **Current Status**: Testing mode - processing **100 images** (~10-15 min)
-# MAGIC
-# MAGIC ### To Process ALL Images:
-# MAGIC
-# MAGIC **Option 1: Batch Processing (RECOMMENDED)**
-# MAGIC ```sql
-# MAGIC -- Process in batches of 500 images to avoid timeouts
-# MAGIC -- Run this cell multiple times, changing OFFSET each time
-# MAGIC
-# MAGIC INSERT INTO invoice_analytics_dev.bronze.invoices_raw_ocr
-# MAGIC SELECT * FROM (
-# MAGIC   WITH image_batch AS (
-# MAGIC     SELECT path, content, length, modificationTime,
-# MAGIC            regexp_extract(path, '[^/]+$', 0) AS file_name,
-# MAGIC            ROW_NUMBER() OVER (ORDER BY path) as rn
-# MAGIC     FROM READ_FILES('/Volumes/invoice_analytics_dev/bronze/raw_data/', format => 'binaryFile')
-# MAGIC   )
-# MAGIC   SELECT
-# MAGIC     path AS image_path,
-# MAGIC     file_name,
-# MAGIC     ai_parse_document(content, MAP('version', '2.0')) AS parsed_content,
-# MAGIC     ...
-# MAGIC   FROM image_batch
-# MAGIC   WHERE rn BETWEEN 101 AND 600  -- Batch 2: images 101-600
-# MAGIC );
-# MAGIC ```
-# MAGIC
-# MAGIC **Option 2: Remove LIMIT**
-# MAGIC - Change `LIMIT 100` to `LIMIT 8137` in Cell 6
-# MAGIC - Expected time: **4-6 hours** on serverless
-# MAGIC - Run during off-hours
-# MAGIC
-# MAGIC **Option 3: Use Databricks Jobs**
-# MAGIC - Schedule the job to run overnight
-# MAGIC - Set timeout to 8 hours
-# MAGIC - Enable auto-retry on failure
-
-# COMMAND ----------
-
 # DBTITLE 1,Optimize Bronze Table
 # MAGIC %sql
 # MAGIC -- Optimize and Z-order for faster queries
@@ -160,37 +119,80 @@ print(f"Target Table: {BRONZE_TABLE}")
 # COMMAND ----------
 
 # DBTITLE 1,Write to Bronze Table
-# Verify table was created
+# Comprehensive verification
+df_bronze_table = spark.table(BRONZE_TABLE)
+
 print(f"\n✓ Bronze ingestion complete!")
 print(f"✓ Data written to: {BRONZE_TABLE}")
-print(f"\nVerifying table...")
-row_count = spark.table(BRONZE_TABLE).count()
-print(f"✓ Table contains {row_count:,} records")
+
+total_records = df_bronze_table.count()
+print(f"\n✅ Total images processed: {total_records:,}")
+
+if total_records > 0:
+    error_count = df_bronze_table.filter(col("has_error") == True).count()
+    success_count = total_records - error_count
+    success_rate = (success_count / total_records * 100)
+    print(f"   ✓ Successfully parsed: {success_count:,} ({success_rate:.1f}%)")
+    print(f"   ⚠️ Parse errors: {error_count:,} ({100-success_rate:.1f}%)")
+    
+    if success_count > 0:
+        stats = df_bronze_table.filter(col("has_error") == False).agg(
+            avg("page_count").alias("avg_pages"),
+            avg("element_count").alias("avg_elements")
+        ).collect()[0]
+        print(f"\n📊 Parsing Quality:")
+        print(f"   Avg pages per document: {stats['avg_pages']:.1f}")
+        print(f"   Avg elements extracted: {stats['avg_elements']:.1f}")
+else:
+    print("   ⚠️ No records found - check source path")
 
 # COMMAND ----------
 
 # DBTITLE 1,Verify OCR Results
-# Verify document parsing
+# Detailed statistics and sample data
 df_bronze_table = spark.table(BRONZE_TABLE)
+
+print("="*80)
+print("BRONZE LAYER - DOCUMENT PARSING REPORT")
+print("="*80)
+
 row_count = df_bronze_table.count()
 error_count = df_bronze_table.filter(col("has_error") == True).count()
 success_count = row_count - error_count
 success_rate = (success_count / row_count * 100) if row_count > 0 else 0
-avg_page_count = df_bronze_table.agg(avg("page_count")).collect()[0][0]
-avg_element_count = df_bronze_table.agg(avg("element_count")).collect()[0][0]
 
-print("="*80)
-print("BRONZE LAYER DOCUMENT PARSING STATISTICS")
-print("="*80)
-print(f"Total documents processed: {row_count:,}")
-print(f"Parsing successful: {success_count:,}")
-print(f"Parsing errors: {error_count:,}")
-print(f"Success rate: {success_rate:.2f}%")
-print(f"Avg pages per document: {avg_page_count:.1f}")
-print(f"Avg elements extracted: {avg_element_count:.1f}")
-print(f"Table: {BRONZE_TABLE}")
+print(f"\n📄 Processing Summary:")
+print(f"   Total images: {row_count:,}")
+print(f"   Successful: {success_count:,} ({success_rate:.1f}%)")
+print(f"   Errors: {error_count:,} ({100-success_rate:.1f}%)")
+
+if success_count > 0:
+    stats = df_bronze_table.filter(col("has_error") == False).agg(
+        avg("page_count").alias("avg_pages"),
+        max("page_count").alias("max_pages"),
+        avg("element_count").alias("avg_elements"),
+        max("element_count").alias("max_elements"),
+        avg("file_size_bytes").alias("avg_size")
+    ).collect()[0]
+    
+    print(f"\n📊 Quality Metrics:")
+    print(f"   Avg pages: {stats['avg_pages']:.1f} (max: {stats['max_pages']})")
+    print(f"   Avg elements: {stats['avg_elements']:.1f} (max: {stats['max_elements']})")
+    print(f"   Avg file size: {stats['avg_size']/1024:.1f} KB")
+
+if error_count > 0:
+    print(f"\n⚠️ Error Analysis:")
+    print(f"   {error_count:,} images failed to parse")
+    print(f"   Check error_status field for details")
+
+print(f"\n✅ Ready for silver transformation")
+print(f"   Next: Run 02_silver_transformation notebook")
 print("="*80)
 
-# Show sample parsed documents
-print("\nSample Parsed Documents:")
-display(df_bronze_table.select("file_name", "page_count", "element_count", "has_error").limit(10))
+# Show sample successful parses
+if success_count > 0:
+    print("\n👁️ Sample Successfully Parsed Documents:")
+    display(df_bronze_table.filter(col("has_error") == False)
+            .select("file_name", "page_count", "element_count", "file_size_bytes")
+            .orderBy(desc("element_count"))
+            .limit(10))

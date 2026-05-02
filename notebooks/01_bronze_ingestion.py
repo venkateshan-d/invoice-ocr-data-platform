@@ -15,15 +15,26 @@
 # Get parameters from job or use defaults
 dbutils.widgets.text("catalog_name", "invoice_analytics_dev", "Catalog Name")
 dbutils.widgets.text("environment", "dev", "Environment")
+dbutils.widgets.text("test_mode", "false", "Test Mode (true = 100 images only)")
 
 catalog_name = dbutils.widgets.get("catalog_name")
 environment = dbutils.widgets.get("environment")
+test_mode = dbutils.widgets.get("test_mode").lower() == "true"
 
+print("="*80)
+print("BRONZE LAYER - OCR PROCESSING")
+print("="*80)
 print(f"Environment: {environment}")
 print(f"Catalog: {catalog_name}")
-print(f"\n⚡ PROCESSING ALL IMAGES (8,137)")
-print(f"⚡ Serverless will auto-scale for parallel AI calls")
-print(f"⚡ Expected time: ~30-45 minutes")
+print(f"Test Mode: {test_mode}")
+if test_mode:
+    print(f"\n🧪 TEST MODE: Processing 100 images for validation")
+    print(f"   Estimated time: ~2-3 minutes")
+else:
+    print(f"\n⚡ PRODUCTION MODE: Processing ALL images (8,137)")
+    print(f"   Serverless will auto-scale for parallel AI calls")
+    print(f"   Estimated time: ~30-45 minutes")
+print("="*80)
 
 # COMMAND ----------
 
@@ -41,49 +52,56 @@ print(f"Target Table: {BRONZE_TABLE}")
 # COMMAND ----------
 
 # DBTITLE 1,Read Images with Auto Loader
-# MAGIC %sql
-# MAGIC -- OPTIMIZED FOR FULL DATASET: Process ALL 8,137 images
-# MAGIC -- Parallelization: Serverless will distribute AI calls across workers
-# MAGIC -- Expected time: ~30-45 minutes (with auto-scaling)
-# MAGIC -- Single ai_parse_document call per image (not 4x)
-# MAGIC
-# MAGIC CREATE OR REPLACE TABLE invoice_analytics_dev.bronze.invoices_raw_ocr
-# MAGIC AS
-# MAGIC WITH image_batch AS (
-# MAGIC   SELECT
-# MAGIC     path,
-# MAGIC     regexp_extract(path, '[^/]+$', 0) AS file_name,
-# MAGIC     content,
-# MAGIC     length AS file_size_bytes,
-# MAGIC     modificationTime AS file_modified_time
-# MAGIC   FROM READ_FILES(
-# MAGIC     '/Volumes/invoice_analytics_dev/bronze/raw_data/',
-# MAGIC     format => 'binaryFile'
-# MAGIC   )
-# MAGIC   -- NO LIMIT: Process ALL images
-# MAGIC ),
-# MAGIC parsed_docs AS (
-# MAGIC   SELECT
-# MAGIC     path,
-# MAGIC     file_name,
-# MAGIC     file_size_bytes,
-# MAGIC     file_modified_time,
-# MAGIC     ai_parse_document(content, MAP('version', '2.0')) AS parsed_content
-# MAGIC   FROM image_batch
-# MAGIC   -- Serverless auto-parallelizes AI calls
-# MAGIC )
-# MAGIC SELECT
-# MAGIC   path AS image_path,
-# MAGIC   file_name,
-# MAGIC   parsed_content,
-# MAGIC   try_cast(parsed_content:error_status AS STRING) IS NOT NULL AS has_error,
-# MAGIC   size(try_cast(parsed_content:document:pages AS ARRAY<VARIANT>)) AS page_count,
-# MAGIC   size(try_cast(parsed_content:document:elements AS ARRAY<VARIANT>)) AS element_count,
-# MAGIC   file_size_bytes,
-# MAGIC   file_modified_time,
-# MAGIC   current_timestamp() AS _load_timestamp,
-# MAGIC   'dev' AS _environment
-# MAGIC FROM parsed_docs;
+# Build SQL query with optional LIMIT for test mode
+limit_clause = "LIMIT 100" if test_mode else ""
+
+sql_query = f"""
+CREATE OR REPLACE TABLE {catalog_name}.bronze.invoices_raw_ocr
+AS
+WITH image_batch AS (
+  SELECT
+    path,
+    regexp_extract(path, '[^/]+$', 0) AS file_name,
+    content,
+    length AS file_size_bytes,
+    modificationTime AS file_modified_time
+  FROM READ_FILES(
+    '/Volumes/{catalog_name}/bronze/raw_data/',
+    format => 'binaryFile'
+  )
+  {limit_clause}
+),
+parsed_docs AS (
+  SELECT
+    path,
+    file_name,
+    file_size_bytes,
+    file_modified_time,
+    ai_parse_document(content, MAP('version', '2.0')) AS parsed_content
+  FROM image_batch
+)
+SELECT
+  path AS image_path,
+  file_name,
+  parsed_content,
+  try_cast(parsed_content:error_status AS STRING) IS NOT NULL AS has_error,
+  size(try_cast(parsed_content:document:pages AS ARRAY<VARIANT>)) AS page_count,
+  size(try_cast(parsed_content:document:elements AS ARRAY<VARIANT>)) AS element_count,
+  file_size_bytes,
+  file_modified_time,
+  current_timestamp() AS _load_timestamp,
+  '{environment}' AS _environment
+FROM parsed_docs
+"""
+
+print(f"\n⚡ Executing OCR processing...")
+if test_mode:
+    print(f"   Mode: TEST (100 images)")
+else:
+    print(f"   Mode: PRODUCTION (all images)")
+
+result_df = spark.sql(sql_query)
+print(f"\n✅ OCR processing complete!")
 
 # COMMAND ----------
 
@@ -99,29 +117,37 @@ print(f"Target Table: {BRONZE_TABLE}")
 # Comprehensive verification
 df_bronze_table = spark.table(BRONZE_TABLE)
 
-print(f"\n✓ Bronze ingestion complete!")
-print(f"✓ Data written to: {BRONZE_TABLE}")
+print(f"\n✅ Bronze ingestion complete!")
+print(f"✅ Data written to: {BRONZE_TABLE}")
 
 total_records = df_bronze_table.count()
-print(f"\n✅ Total images processed: {total_records:,}")
+print(f"\n📊 Total images processed: {total_records:,}")
 
 if total_records > 0:
     error_count = df_bronze_table.filter(col("has_error") == True).count()
     success_count = total_records - error_count
     success_rate = (success_count / total_records * 100)
     print(f"   ✓ Successfully parsed: {success_count:,} ({success_rate:.1f}%)")
-    print(f"   ⚠️ Parse errors: {error_count:,} ({100-success_rate:.1f}%)")
+    print(f"   ⚠️  Parse errors: {error_count:,} ({100-success_rate:.1f}%)")
     
     if success_count > 0:
         stats = df_bronze_table.filter(col("has_error") == False).agg(
             avg("page_count").alias("avg_pages"),
-            avg("element_count").alias("avg_elements")
+            avg("element_count").alias("avg_elements"),
+            avg("file_size_bytes").alias("avg_size")
         ).collect()[0]
         print(f"\n📊 Parsing Quality:")
         print(f"   Avg pages per document: {stats['avg_pages']:.1f}")
         print(f"   Avg elements extracted: {stats['avg_elements']:.1f}")
+        print(f"   Avg file size: {stats['avg_size']/1024:.1f} KB")
+    
+    if test_mode:
+        print(f"\n🧪 Test mode complete - {total_records} records processed")
+        print(f"   Set test_mode=false to process all 8,137 images")
+    else:
+        print(f"\n✅ Production processing complete - {total_records:,} records")
 else:
-    print("   ⚠️ No records found - check source path")
+    print("   ⚠️  No records found - check source path")
 
 # COMMAND ----------
 
